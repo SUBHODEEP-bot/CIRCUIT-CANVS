@@ -288,6 +288,48 @@ def api_logout():
     return response
 
 
+@app.route("/api/auth/profile", methods=["PUT"])
+def api_update_profile():
+    """Update user's display_name"""
+    access_token = _get_access_token()
+    if not access_token:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    payload = request.get_json(force=True) or {}
+    display_name = (payload.get("display_name") or "").strip()
+    
+    if not display_name:
+        return jsonify({"error": "Display name cannot be empty"}), 400
+    
+    user = _get_current_user(access_token)
+    if not user:
+        return jsonify({"error": "User not found"}), 401
+    
+    try:
+        # Update user metadata in Supabase
+        response = requests.put(
+            f"{AUTH_URL}/user",
+            headers=_supabase_headers(access_token),
+            json={"data": {"display_name": display_name}},
+            timeout=10,
+        )
+        
+        if not response.ok:
+            return jsonify({"error": "Failed to update profile"}), 500
+        
+        # Return updated user info
+        user_data = response.json().get("user", {})
+        safe_user = {
+            "id": user_data.get("id"),
+            "email": user_data.get("email"),
+            "display_name": display_name,
+        }
+        return jsonify({"user": safe_user})
+    except Exception as e:
+        print(f"Profile update error: {e}")
+        return jsonify({"error": "Failed to update profile"}), 500
+
+
 @app.route("/api/admin/login", methods=["POST"])
 def api_admin_login():
     payload = request.get_json(force=True) or {}
@@ -678,5 +720,7 @@ def index():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.getenv("PORT", 5000))
+    debug_mode = os.getenv("FLASK_ENV") == "development"
+    app.run(host="0.0.0.0", port=port, debug=debug_mode)
 

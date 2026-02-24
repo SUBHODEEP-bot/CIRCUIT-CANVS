@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: circuitforge-app
+    env: python
+    plan: free
+    buildCommand: |
+      pip install -r requirements.txt && \
+      cd circuit-canvas && \
+      npm install && \
+      npm run build && \
+      cd ..
+    startCommand: python app.py
+    envVars:
+      - key: VITE_SUPABASE_URL
+        scope: build
+        sync: false
+      - key: VITE_SUPABASE_PUBLISHABLE_KEY
+        scope: build
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        scope: build
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE
+        scope: build
+        sync: false
+      - key: ADMIN_NAME
+        scope: build
+        sync: false
+      - key: ADMIN_PASSWORD
+        scope: build
+        sync: false

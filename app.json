@@ -1,0 +1,40 @@
+{
+  "name": "CircuitForge Lab",
+  "description": "A professional circuit design and simulation platform",
+  "repository": "https://github.com/yourusername/circuit-lab",
+  "keywords": ["circuit", "design", "electronics", "diagram"],
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    },
+    {
+      "url": "heroku/nodejs"
+    }
+  ],
+  "env": {
+    "VITE_SUPABASE_URL": {
+      "description": "Supabase project URL",
+      "required": true
+    },
+    "VITE_SUPABASE_PUBLISHABLE_KEY": {
+      "description": "Supabase public API key",
+      "required": true
+    },
+    "SUPABASE_SERVICE_KEY": {
+      "description": "Supabase service role key for backend",
+      "required": false
+    },
+    "SUPABASE_SERVICE_ROLE": {
+      "description": "Supabase service role key (alternative)",
+      "required": false
+    },
+    "ADMIN_NAME": {
+      "description": "Admin panel username",
+      "required": false
+    },
+    "ADMIN_PASSWORD": {
+      "description": "Admin panel password",
+      "required": false
+    }
+  }
+}

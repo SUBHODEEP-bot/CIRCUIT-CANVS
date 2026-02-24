@@ -54,6 +54,13 @@ export function logout() {
   });
 }
 
+export function updateProfile(displayName: string) {
+  return request<{ user: SessionUser | null }>("/api/auth/profile", {
+    method: "PUT",
+    body: JSON.stringify({ display_name: displayName }),
+  });
+}
+
 export function getProjects() {
   return request<any[]>("/api/projects");
 }

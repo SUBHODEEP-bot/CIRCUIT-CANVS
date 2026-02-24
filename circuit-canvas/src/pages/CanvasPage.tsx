@@ -69,8 +69,9 @@ export default function CanvasPage() {
         return;
       }
       
-      // Set user name for PDF
-      setUserName(session.user.display_name || session.user.email || "");
+      // Set user name for PDF - always have a fallback
+      const name = session.user.display_name || session.user.email || "Designer";
+      setUserName(name);
 
       try {
         // Load modules, pins, and project in parallel
@@ -272,10 +273,10 @@ export default function CanvasPage() {
     try {
       toast({ title: "Generating PDF...", description: "Creating professional circuit diagram document." });
 
-      // Capture canvas
+      // Capture canvas with white background for better visibility
       const canvas = await html2canvas(canvasRef.current, {
-        backgroundColor: "#0a0f1f",
-        scale: 3, // 3x scale for HD quality
+        backgroundColor: "#ffffff",
+        scale: 4, // 4x scale for extra HD quality
         logging: false,
         useCORS: true,
         allowTaint: true,
@@ -283,91 +284,124 @@ export default function CanvasPage() {
 
       const imgData = canvas.toDataURL("image/png");
       
-      // Create PDF with A4 size
+      // Create PDF with A4 size (landscape for better diagram visibility)
       const pdf = new jsPDF({
-        orientation: "portrait",
+        orientation: "landscape",
         unit: "mm",
         format: "a4",
       });
 
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 12;
+      const margin = 10;
       const contentWidth = pageWidth - margin * 2;
 
-      // Title Page
+      // ==== TITLE PAGE ====
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(28);
-      pdf.text("Circuit Design Document", pageWidth / 2, 50, { align: "center" });
+      pdf.setFontSize(32);
+      pdf.text("Circuit Design Document", pageWidth / 2, 45, { align: "center" });
 
-      pdf.setFontSize(14);
+      // Decorative line
+      pdf.setDrawColor(41, 128, 185);
+      pdf.setLineWidth(1);
+      pdf.line(margin + 20, 55, pageWidth - margin - 20, 55);
+
+      pdf.setFontSize(16);
       pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(50, 50, 50);
       pdf.text(`Project: ${projectName}`, pageWidth / 2, 75, { align: "center" });
       
-      pdf.setFontSize(11);
+      pdf.setFontSize(13);
       pdf.setFont("helvetica", "italic");
-      pdf.text(`Designed by ${userName}`, pageWidth / 2, 87, { align: "center" });
+      pdf.setTextColor(80, 80, 80);
+      const designedByText = userName && userName.trim() ? `Designed by ${userName}` : "Designed by Designer";
+      pdf.text(designedByText, pageWidth / 2, 90, { align: "center" });
       
       pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(100, 100, 100);
       const now = new Date();
       const dateStr = now.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-      pdf.setFontSize(10);
-      pdf.text(`Generated: ${dateStr}`, pageWidth / 2, 99, { align: "center" });
+      pdf.setFontSize(11);
+      pdf.text(`Generated: ${dateStr}`, pageWidth / 2, 105, { align: "center" });
       
       const timeStr = now.toLocaleTimeString();
-      pdf.text(`Time: ${timeStr}`, pageWidth / 2, 107, { align: "center" });
+      pdf.text(`Time: ${timeStr}`, pageWidth / 2, 113, { align: "center" });
 
-      // Add horizontal line
-      pdf.setDrawColor(66, 133, 244);
-      pdf.setLineWidth(0.5);
-      pdf.line(margin, 118, pageWidth - margin, 118);
-
-      // Circuit Details Section (simplified for A4)
+      // Circuit Details Section - Enhanced styling
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(11);
-      pdf.text("Circuit Details", margin, 130);
+      pdf.setFontSize(12);
+      pdf.setTextColor(30, 30, 30);
+      pdf.text("Circuit Summary", margin + 10, 135);
 
       pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(9);
+      pdf.setFontSize(10);
+      pdf.setTextColor(60, 60, 60);
       const moduleCount = placedModules.length;
       const wireCount = wires.length;
       
-      pdf.text(`Modules: ${moduleCount} | Connections: ${wireCount}`, margin + 5, 140);
-      
-      let yPos = 150;
-      placedModules.slice(0, 5).forEach((mod, idx) => {
-        const moduleName = modules.find(m => m.id === mod.moduleId)?.name || "Unknown";
-        pdf.text(`${idx + 1}. ${moduleName}`, margin + 10, yPos);
-        yPos += 6;
-      });
+      pdf.text(`Total Modules: ${moduleCount}`, margin + 15, 148);
+      pdf.text(`Total Connections: ${wireCount}`, margin + 15, 158);
 
-      // Add new page for circuit diagram
+      // Component list
+      if (placedModules.length > 0) {
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(10);
+        pdf.text("Components Used:", margin + 15, 172);
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(9);
+        let yPos = 182;
+        placedModules.slice(0, 8).forEach((mod, idx) => {
+          const moduleName = modules.find(m => m.id === mod.moduleId)?.name || "Unknown";
+          pdf.text(`${idx + 1}. ${moduleName}`, margin + 20, yPos);
+          yPos += 7;
+          if (yPos > pageHeight - 15) return;
+        });
+      }
+
+      // ==== CIRCUIT DIAGRAM PAGE ====
       pdf.addPage();
       
-      // Header on new page
+      // Page header
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(14);
+      pdf.setFontSize(16);
+      pdf.setTextColor(30, 30, 30);
       pdf.text("Circuit Diagram", margin, 15);
       
-      // Add the circuit image
-      const diagramY = 25;
-      const availableHeight = pageHeight - diagramY - margin;
+      // Decorative line
+      pdf.setDrawColor(41, 128, 185);
+      pdf.setLineWidth(0.5);
+      pdf.line(margin, 20, pageWidth - margin, 20);
+
+      // Add the circuit image with better sizing
+      const diagramStartY = 28;
+      const availableHeight = pageHeight - diagramStartY - margin;
       const imgWidth = contentWidth;
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-      pdf.addImage(imgData, "PNG", margin, diagramY, imgWidth, Math.min(imgHeight, availableHeight));
+      // Add white background box for diagram
+      pdf.setFillColor(255, 255, 255);
+      pdf.rect(margin - 2, diagramStartY - 2, contentWidth + 4, Math.min(imgHeight, availableHeight) + 4, "F");
+      
+      // Add border around diagram
+      pdf.setDrawColor(200, 200, 200);
+      pdf.setLineWidth(0.3);
+      pdf.rect(margin - 2, diagramStartY - 2, contentWidth + 4, Math.min(imgHeight, availableHeight) + 4);
+
+      pdf.addImage(imgData, "PNG", margin, diagramStartY, imgWidth, Math.min(imgHeight, availableHeight));
 
       // Function to add footer to all pages
       const addFooters = () => {
         const totalPages = pdf.internal.pages.length - 1;
         pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(9);
+        pdf.setFontSize(8);
         pdf.setTextColor(128, 128, 128);
 
-        for (let i = 2; i <= totalPages; i++) {
+        for (let i = 1; i <= totalPages; i++) {
           pdf.setPage(i);
-          pdf.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 8, { align: "center" });
-          pdf.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12);
+          pdf.line(margin, pageHeight - 8, pageWidth - margin, pageHeight - 8);
+          pdf.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 4, { align: "center" });
+          pdf.text("CircuitForge Lab", margin, pageHeight - 4);
         }
       };
 
@@ -378,12 +412,27 @@ export default function CanvasPage() {
 
         while (remainingHeight > 0) {
           pdf.addPage();
-          const currentHeight = Math.min(remainingHeight, pageHeight - margin * 2);
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(12);
+          pdf.setTextColor(30, 30, 30);
+          pdf.text("Circuit Diagram (continued)", margin, 15);
+          
+          const currentHeight = Math.min(remainingHeight, pageHeight - margin * 3);
+          
+          // Add white background box
+          pdf.setFillColor(255, 255, 255);
+          pdf.rect(margin - 2, 22, contentWidth + 4, currentHeight + 4, "F");
+          
+          // Add border
+          pdf.setDrawColor(200, 200, 200);
+          pdf.setLineWidth(0.3);
+          pdf.rect(margin - 2, 22, contentWidth + 4, currentHeight + 4);
+          
           pdf.addImage(
             imgData,
             "PNG",
             margin,
-            margin,
+            24,
             imgWidth,
             currentHeight,
             undefined,
@@ -401,7 +450,7 @@ export default function CanvasPage() {
       const fileName = `${projectName || "Circuit"}_${now.toISOString().split("T")[0]}.pdf`;
       pdf.save(fileName);
 
-      toast({ title: "Professional PDF exported!", description: `Saved as ${fileName}` });
+      toast({ title: "✓ Professional PDF Exported!", description: `Successfully saved as ${fileName}` });
     } catch (err) {
       const message = err instanceof Error ? err.message : "PDF export failed";
       toast({ variant: "destructive", title: "Export failed", description: message });

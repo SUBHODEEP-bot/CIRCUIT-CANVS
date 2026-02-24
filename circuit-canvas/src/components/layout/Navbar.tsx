@@ -1,9 +1,17 @@
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Zap, LogOut, LayoutDashboard, Shield, User } from "lucide-react";
+import { Zap, LogOut, LayoutDashboard, Shield, User, Edit2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { getSession, logout, adminLogin, type SessionUser } from "@/lib/api";
+import { getSession, logout, adminLogin, updateProfile, type SessionUser } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 
 /**
  * Main navigation bar for CircuitForge Lab
@@ -13,6 +21,8 @@ export default function Navbar() {
   const navigate = useNavigate();
   const [user, setUser] = useState<SessionUser | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [newName, setNewName] = useState("");
   const { toast } = useToast();
   const location = useLocation();
   const hideAdminOnDashboard = location.pathname.startsWith("/dashboard");
@@ -22,12 +32,34 @@ export default function Navbar() {
       .then((data) => {
         setUser(data.user);
         setIsAdmin(data.roles.includes("admin"));
+        if (data.user?.display_name) {
+          setNewName(data.user.display_name);
+        }
       })
       .catch(() => {
         setUser(null);
         setIsAdmin(false);
       });
   }, []);
+
+  const handleUpdateName = async () => {
+    if (!newName.trim()) {
+      toast({ variant: "destructive", title: "Error", description: "Name cannot be empty" });
+      return;
+    }
+
+    try {
+      const result = await updateProfile(newName.trim());
+      if (result.user) {
+        setUser(result.user);
+        setEditingName(false);
+        toast({ title: "Success", description: "Display name updated!" });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update name";
+      toast({ variant: "destructive", title: "Error", description: message });
+    }
+  };
 
   const handleLogout = async () => {
     try {
@@ -86,10 +118,66 @@ export default function Navbar() {
                   Admin
                 </Button>
               )}
-              <Button variant="ghost" size="sm" onClick={handleLogout}>
-                <LogOut className="h-4 w-4 mr-1" />
-                Logout
-              </Button>
+              
+              {/* User Profile Dropdown */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm">
+                    <User className="h-4 w-4 mr-1" />
+                    {user.display_name || user.email || "User"}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  {editingName ? (
+                    <div className="p-3 space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground">Update Display Name</div>
+                      <Input
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        placeholder="Your name"
+                        className="h-8"
+                        autoFocus
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          className="flex-1"
+                          onClick={handleUpdateName}
+                        >
+                          Save
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => {
+                            setEditingName(false);
+                            setNewName(user.display_name || "");
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <DropdownMenuItem disabled>
+                        <span className="text-xs text-muted-foreground">{user.email}</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => setEditingName(true)}>
+                        <Edit2 className="h-4 w-4 mr-2" />
+                        Edit Profile
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={handleLogout} className="text-destructive">
+                        <LogOut className="h-4 w-4 mr-2" />
+                        Logout
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           ) : (
             <>
