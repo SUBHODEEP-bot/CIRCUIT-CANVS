@@ -220,4 +220,4 @@ MIT
 
 ---
 
-Made with ❤️ by SubhodeepFor updates and support, visit the project repository.
+Made with ❤️ by Subhodeep For updates and support, visit the project repository.

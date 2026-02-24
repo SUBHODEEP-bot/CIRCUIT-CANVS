@@ -273,14 +273,32 @@ export default function CanvasPage() {
     try {
       toast({ title: "Generating PDF...", description: "Creating professional circuit diagram document." });
 
-      // Capture canvas with white background for better visibility
-      const canvas = await html2canvas(canvasRef.current, {
+      // Temporarily hide the grid background for clean PDF
+      const originalClass = canvasRef.current.className;
+      canvasRef.current.classList.remove("circuit-grid");
+      
+      // Create a container div with white background to capture clean
+      const tempContainer = document.createElement("div");
+      tempContainer.style.position = "absolute";
+      tempContainer.style.left = "-9999px";
+      tempContainer.style.width = canvasRef.current.offsetWidth + "px";
+      tempContainer.style.height = canvasRef.current.offsetHeight + "px";
+      tempContainer.style.backgroundColor = "#ffffff";
+      tempContainer.appendChild(canvasRef.current.cloneNode(true));
+      document.body.appendChild(tempContainer);
+
+      // Capture canvas WITHOUT grid background and with white background
+      const canvas = await html2canvas(tempContainer, {
         backgroundColor: "#ffffff",
         scale: 4, // 4x scale for extra HD quality
         logging: false,
         useCORS: true,
         allowTaint: true,
       });
+
+      // Clean up
+      document.body.removeChild(tempContainer);
+      canvasRef.current.className = originalClass;
 
       const imgData = canvas.toDataURL("image/png");
       

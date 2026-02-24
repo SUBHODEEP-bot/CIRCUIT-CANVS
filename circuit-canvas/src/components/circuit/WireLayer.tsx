@@ -113,8 +113,8 @@ export default function WireLayer({
               strokeWidth={isSelected ? 5 : 3}
               strokeLinecap="round"
               strokeLinejoin="round"
-              opacity={0.3}
-              filter="blur(3px)"
+              opacity={0.5}
+              filter="blur(2px)"
             />
             <path
               d={path}
@@ -123,7 +123,7 @@ export default function WireLayer({
               strokeWidth={isSelected ? 3 : 2}
               strokeLinecap="round"
               strokeLinejoin="round"
-              opacity={0.9}
+              opacity={1}
             />
             {/* Endpoint dots */}
             {isSelected && (
@@ -171,7 +171,7 @@ export default function WireLayer({
               strokeDasharray="6 3"
               strokeLinecap="round"
               strokeLinejoin="round"
-              opacity={0.7}
+              opacity={1}
             />
             {pendingWire.waypoints.map((wp, i) => (
               <circle
@@ -182,7 +182,7 @@ export default function WireLayer({
                 fill={pendingWire.color}
                 stroke="white"
                 strokeWidth="1.5"
-                opacity={0.9}
+                opacity={1}
               />
             ))}
           </g>
