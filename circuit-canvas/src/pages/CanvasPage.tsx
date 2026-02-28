@@ -7,7 +7,7 @@ import ModuleSidebar from "@/components/circuit/ModuleSidebar";
 import ModuleNode from "@/components/circuit/ModuleNode";
 import WireLayer from "@/components/circuit/WireLayer";
 import {
-  Save, ZoomIn, ZoomOut, RotateCcw, Trash2, ArrowLeft, Pencil, X, FileDown,
+  Save, ZoomIn, ZoomOut, RotateCcw, Trash2, ArrowLeft, Pencil, X, FileDown, Cpu,
 } from "lucide-react";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
@@ -16,7 +16,7 @@ import type {
   WireWaypoint,
 } from "@/lib/circuit-types";
 import { WIRE_COLORS, MODULE_DISPLAY_WIDTH } from "@/lib/circuit-types";
-import { getSession, getModules, getModulePins, getProject, updateProject } from "@/lib/api";
+import { getSession, getModules, getModulePins, getProject, updateProject, generatePCB } from "@/lib/api";
 
 /**
  * Main circuit canvas page
@@ -476,6 +476,52 @@ export default function CanvasPage() {
     }
   };
 
+  const handleGeneratePCB = async () => {
+    if (placedModules.length === 0) {
+      toast({ variant: "destructive", title: "No components", description: "Place some modules on the canvas first." });
+      return;
+    }
+
+    toast({ title: "Generating PCB...", description: "Building netlist, placing components, routing traces." });
+
+    const schematicModules = placedModules.map((inst) => {
+      const mod = modules.find((m) => m.id === inst.moduleId);
+      const pins = allPins[inst.moduleId] || [];
+      return {
+        instanceId: inst.instanceId,
+        moduleId: inst.moduleId,
+        moduleName: mod?.name || "Unknown",
+        category: mod?.category || null,
+        x: inst.x,
+        y: inst.y,
+        pins: pins.map((p) => ({
+          id: p.id,
+          name: p.name,
+          pin_type: p.pin_type,
+        })),
+      };
+    });
+
+    const schematic = {
+      modules: schematicModules,
+      wires: wires.map((w) => ({
+        fromInstanceId: w.fromInstanceId,
+        fromPinId: w.fromPinId,
+        toInstanceId: w.toInstanceId,
+        toPinId: w.toPinId,
+        color: w.color,
+      })),
+    };
+
+    try {
+      const pcbLayout = await generatePCB(schematic);
+      navigate("/pcb", { state: { pcb: pcbLayout } });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "PCB generation failed";
+      toast({ variant: "destructive", title: "PCB generation failed", description: message });
+    }
+  };
+
   // Get pending wire position for wire being drawn
   const getPendingWire = () => {
     if (!selectedPin) return null;
@@ -584,6 +630,12 @@ export default function CanvasPage() {
         <Button size="sm" onClick={exportToPDF} variant="outline">
           <FileDown className="h-3 w-3 mr-1" />
           PDF
+        </Button>
+
+        {/* Generate PCB */}
+        <Button size="sm" onClick={handleGeneratePCB} variant="outline" className="border-primary/50 text-primary hover:bg-primary/10">
+          <Cpu className="h-3 w-3 mr-1" />
+          Generate PCB
         </Button>
       </div>
 

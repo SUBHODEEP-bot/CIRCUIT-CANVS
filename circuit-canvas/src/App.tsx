@@ -8,6 +8,7 @@ import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import CanvasPage from "./pages/CanvasPage";
 import AdminPage from "./pages/AdminPage";
+import PCBView from "./pages/PCBView";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -24,6 +25,7 @@ const App = () => (
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/canvas/:projectId" element={<CanvasPage />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/pcb" element={<PCBView />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

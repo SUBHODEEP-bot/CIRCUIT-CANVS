@@ -148,6 +148,13 @@ export function adminDeletePin(pinId: string) {
   });
 }
 
+export function generatePCB(schematic: any) {
+  return request<any>("/api/generate-pcb", {
+    method: "POST",
+    body: JSON.stringify(schematic),
+  });
+}
+
 export function adminLogin(name: string, password: string) {
   return request<{ success: boolean }>("/api/admin/login", {
     method: "POST",

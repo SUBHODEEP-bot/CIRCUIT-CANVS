@@ -690,6 +690,27 @@ def api_upload_module_image():
     return jsonify({"public_url": public_url})
 
 
+@app.route("/api/generate-pcb", methods=["POST"])
+def api_generate_pcb():
+    """
+    Accepts schematic JSON from the canvas, runs the PCB generation
+    pipeline, and returns the PCB layout JSON for rendering.
+    """
+    import sys
+    sys.path.insert(0, str(BASE_DIR))
+    from pcb import generate_pcb
+
+    body = request.get_json(force=True) or {}
+    if not body.get("modules"):
+        return jsonify({"error": "No modules in schematic"}), 400
+
+    try:
+        pcb_layout = generate_pcb(body)
+        return jsonify(pcb_layout)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 @app.route("/api/health", methods=["GET"])
 def api_health():
     return jsonify({"status": "ok"})
