@@ -10,24 +10,42 @@ export interface SessionResponse {
 }
 
 async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
-  const res = await fetch(input, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-    credentials: "include",
-    ...init,
-  });
+  try {
+    const res = await fetch(input, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers || {}),
+      },
+      credentials: "include",
+      ...init,
+    });
 
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+    const text = await res.text();
+    
+    let data: any = null;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        // If JSON parsing fails, treat as error response
+        data = { error: `Invalid JSON response: ${text.substring(0, 100)}` };
+      }
+    }
 
-  if (!res.ok) {
-    const message = (data && (data.error || data.message)) || "Request failed";
-    throw new Error(message);
+    if (!res.ok) {
+      const message = (data && (data.error || data.message)) || `Request failed with status ${res.status}`;
+      throw new Error(message);
+    }
+
+    return data as T;
+  } catch (error) {
+    // Handle network errors like timeouts
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      throw new Error(`Network error: ${error.message}`);
+    }
+    // Re-throw other errors
+    throw error;
   }
-
-  return data as T;
 }
 
 export function getSession() {
