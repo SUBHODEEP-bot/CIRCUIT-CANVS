@@ -2,13 +2,14 @@
 PCB generation engine — full professional pipeline:
 
   schematic JSON
-    → global netlist (with auto-detected GND/VCC nets)
-    → footprint assignment (with silkscreen + courtyard)
+    → global netlist (auto GND/VCC detection)
+    → footprint assignment
+    → pad positions overridden from admin's Placed Pins metadata
     → pad-net binding
-    → grid placement
-    → 45° trace routing with DRC clearance
-    → GND copper pour
-    → JSON output (mm units, ready for frontend rendering)
+    → grid placement with courtyard clearance
+    → 45° trace routing with no-cross guarantee + DRC
+    → GND copper pour (traces to GND skipped; pour provides connectivity)
+    → JSON output (mm units)
 """
 
 from __future__ import annotations
@@ -21,22 +22,6 @@ from .units import PX_PER_MM, TRACE_WIDTH_MM, SILKSCREEN_WIDTH_MM
 
 
 def generate_pcb(schematic: dict) -> dict:
-    """
-    Full PCB generation pipeline.
-
-    Input schema:
-    {
-      "modules": [{
-        "instanceId": "...",  "moduleId": "...",
-        "moduleName": "ESP32", "category": "Microcontroller",
-        "pins": [{"id": "...", "name": "GPIO0", "pin_type": "Digital"}, ...]
-      }, ...],
-      "wires": [{
-        "fromInstanceId": "...", "fromPinId": "...",
-        "toInstanceId": "...",   "toPinId": "..."
-      }, ...]
-    }
-    """
     instances = schematic.get("modules", [])
     wires = schematic.get("wires", [])
 
@@ -54,7 +39,26 @@ def generate_pcb(schematic: dict) -> dict:
         )
         instance_fps[inst["instanceId"]] = fp
 
-    # ── 3. Pin-to-pad mapping + pad-net binding ──────────────────
+    # ── 3. Override pad positions with admin's Placed Pins ───────
+    #    The admin places pins on the module image at (x, y) %
+    #    positions.  We scale these percentages to the footprint
+    #    body dimensions so pads appear exactly where the admin
+    #    marked them.
+    for inst in instances:
+        fp = instance_fps.get(inst["instanceId"])
+        if not fp:
+            continue
+        for idx, pin in enumerate(inst.get("pins", [])):
+            if idx >= len(fp.pads):
+                break
+            pin_x_pct = pin.get("x")
+            pin_y_pct = pin.get("y")
+            if pin_x_pct is not None and pin_y_pct is not None:
+                fp.pads[idx].x = (pin_x_pct / 100.0) * fp.width
+                fp.pads[idx].y = (pin_y_pct / 100.0) * fp.height
+            fp.pads[idx].name = pin.get("name", fp.pads[idx].name)
+
+    # ── 4. Pin-to-pad mapping + pad-net binding ──────────────────
     pin_to_pad: dict[str, str] = {}
     net_by_pin: dict[str, str] = {}
     for net in nets:
@@ -65,32 +69,34 @@ def generate_pcb(schematic: dict) -> dict:
         fp = instance_fps.get(inst["instanceId"])
         if not fp:
             continue
-        inst_pins = inst.get("pins", [])
-        for idx, pin in enumerate(inst_pins):
+        for idx, pin in enumerate(inst.get("pins", [])):
             key = f"{inst['instanceId']}::{pin['id']}"
             pad_name = fp.pads[idx].name if idx < len(fp.pads) else f"P{idx}"
             pin_to_pad[key] = pad_name
-            assigned_net = net_by_pin.get(key, "")
             if idx < len(fp.pads):
-                fp.pads[idx].net = assigned_net
+                fp.pads[idx].net = net_by_pin.get(key, "")
 
     enriched = [{**inst, "moduleName": inst.get("moduleName", "Unknown")} for inst in instances]
 
-    # ── 4. Placement ─────────────────────────────────────────────
+    # ── 5. Placement ─────────────────────────────────────────────
     board, placed = place_components(enriched, instance_fps)
 
-    # ── 5. Routing (45° + DRC) ───────────────────────────────────
-    traces, violations = route_nets(nets, placed, pin_to_pad)
-
-    # ── 6. Copper pour (GND plane) ───────────────────────────────
+    # ── 6. Routing ───────────────────────────────────────────────
+    #    Skip GND routing when copper pour is active — the pour
+    #    provides connectivity for the entire GND net.
     gnd_net = next((n for n in nets if n.is_ground), None)
+    skip = {gnd_net.name} if gnd_net else set()
+
+    traces, violations = route_nets(nets, placed, pin_to_pad, skip_nets=skip)
+
+    # ── 7. Copper pour ───────────────────────────────────────────
     pour = generate_pour(board, placed, traces, gnd_net.name if gnd_net else "GND") if gnd_net else None
 
-    # ── 7. Serialise ─────────────────────────────────────────────
+    # ── 8. Serialise ─────────────────────────────────────────────
     return _serialise(board, placed, traces, nets, violations, pour)
 
 
-# ── Output serialisation ─────────────────────────────────────────
+# ── Output ───────────────────────────────────────────────────────
 
 def _serialise(
     board: Board,
@@ -193,10 +199,7 @@ def _serialise(
         }
 
     return {
-        "board": {
-            "width": board.width,
-            "height": board.height,
-        },
+        "board": {"width": board.width, "height": board.height},
         "units": {
             "coordinate": "mm",
             "pxPerMm": PX_PER_MM,

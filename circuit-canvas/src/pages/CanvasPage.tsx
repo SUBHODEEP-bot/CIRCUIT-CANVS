@@ -498,6 +498,8 @@ export default function CanvasPage() {
           id: p.id,
           name: p.name,
           pin_type: p.pin_type,
+          x: p.x,
+          y: p.y,
         })),
       };
     });

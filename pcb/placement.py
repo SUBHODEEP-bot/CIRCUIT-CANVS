@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from .footprints import Footprint
 from .units import BOARD_EDGE_CLEARANCE
 
-COMPONENT_GAP = 4.0   # mm minimum gap between component courtyards
+COMPONENT_GAP = 8.0   # mm gap between courtyards — room for routing channels
 
 
 @dataclass
