@@ -11,6 +11,7 @@ from flask import (
 )
 from dotenv import load_dotenv
 import requests
+import base64
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "circuit-canvas" / "dist"
@@ -28,6 +29,13 @@ SUPABASE_KEY = os.getenv(
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 # Optional service role key for server-side admin mutations
 SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE")
+
+# Gemini API configuration (for AI-assisted module mapping).
+# The user must set GEMINI_API_KEY in an environment variable or in
+# circuit-canvas/.env (never hard-code keys in source control).
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 REST_URL = f"{SUPABASE_URL}/rest/v1"
 AUTH_URL = f"{SUPABASE_URL}/auth/v1"
@@ -115,6 +123,88 @@ def _get_user_roles(access_token: str) -> list[str]:
         return []
     data = resp.json()
     return [row.get("role") for row in data if "role" in row]
+
+
+def _supabase_service_headers() -> dict:
+    """Headers for server-side Supabase access using the service role key."""
+    if not (SUPABASE_SERVICE_ROLE or SUPABASE_SERVICE_KEY):
+        raise RuntimeError("SUPABASE_SERVICE_ROLE is not configured")
+    return _supabase_headers(None, use_service=True)
+
+
+def _gemini_analyze_module_image(image_bytes: bytes) -> dict:
+    """
+    Call the Gemini API with a module image and ask it to return
+    JSON metadata describing the module and its pins.
+    """
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not configured on the server")
+
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+
+    prompt = (
+        "You are helping design a PCB module library for a schematic editor. "
+        "Given the attached module image (with pin labels visible), respond "
+        "with ONLY a single JSON object, no extra text. Use this exact schema:\\n"
+        "{\\n"
+        "  \"module_name\": string,\\n"
+        "  \"category\": string,\\n"
+        "  \"real_dimensions\": {\"width_mm\": number, \"height_mm\": number},\\n"
+        "  \"pins\": [\\n"
+        "    {\\n"
+        "      \"name\": string,\\n"
+        "      \"type\": string,\\n"
+        "      \"x_y_coordinates\": {\"x_percent\": number, \"y_percent\": number},\\n"
+        "      \"description\": string\\n"
+        "    }\\n"
+        "  ]\\n"
+        "}.\\n"
+        "Assume a standard 2.54mm pin pitch when estimating dimensions. "
+        "x_percent and y_percent should be the pin centre position relative "
+        "to the bounding box of the PCB, from 0 to 100."
+    )
+
+    body = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": b64,
+                        }
+                    },
+                ]
+            }
+        ]
+    }
+
+    resp = requests.post(
+        GEMINI_URL,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": GEMINI_API_KEY,
+        },
+        json=body,
+        timeout=60,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"Gemini API error: {resp.status_code} {resp.text[:200]}")
+
+    data = resp.json()
+    try:
+        candidates = data.get("candidates") or []
+        first = candidates[0]
+        parts = first.get("content", {}).get("parts") or first.get("content", [{}]).get("parts", [])
+        if not parts:
+            raise ValueError("No content parts in Gemini response")
+        text = parts[0].get("text", "").strip()
+        import json as _json
+
+        return _json.loads(text)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Failed to parse Gemini response: {exc}; raw={data}") from exc
 
 
 @app.route("/api/auth/signup", methods=["POST"])
@@ -688,6 +778,89 @@ def api_upload_module_image():
 
     public_url = f"{SUPABASE_URL}/storage/v1/object/public/module-images/{new_name}"
     return jsonify({"public_url": public_url})
+
+
+@app.route("/api/admin/module-ai-map", methods=["POST"])
+def api_admin_module_ai_map():
+    """
+    AI-assisted module onboarding.
+
+    Body:
+      {
+        "image_url": "https://.../module-images/xyz.png",
+        "name": "Optional module name for Supabase cache lookup"
+      }
+
+    Behaviour:
+      1. If a module with the same name already exists in Supabase,
+         return its stored metadata (module + pins) without calling Gemini.
+      2. Otherwise, download the image and call Gemini to infer metadata.
+    """
+    payload = request.get_json(force=True) or {}
+    image_url = (payload.get("image_url") or "").strip()
+    name = (payload.get("name") or "").strip()
+
+    if not image_url:
+        return jsonify({"error": "image_url is required"}), 400
+
+    # 1) Supabase cache lookup by name (if provided)
+    if name:
+        try:
+            headers = _supabase_service_headers()
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 500
+
+        params = {
+            "select": "id,name,category,description,image_url",
+            "name": f"eq.{name}",
+            "limit": 1,
+        }
+        resp = requests.get(f"{REST_URL}/modules", headers=headers, params=params, timeout=15)
+        if resp.ok:
+            rows = resp.json()
+            if isinstance(rows, list) and rows:
+                mod = rows[0]
+                mod_id = mod.get("id")
+                # Fetch pins for this module
+                pin_resp = requests.get(
+                    f"{REST_URL}/module_pins",
+                    headers=headers,
+                    params={"select": "*", "module_id": f"eq.{mod_id}"},
+                    timeout=15,
+                )
+                pins_data = []
+                if pin_resp.ok:
+                    for p in pin_resp.json():
+                        pins_data.append(
+                            {
+                                "name": p.get("name"),
+                                "type": p.get("pin_type"),
+                                "x_y_coordinates": {"x_percent": p.get("x"), "y_percent": p.get("y")},
+                                "description": None,
+                            }
+                        )
+
+                return jsonify(
+                    {
+                        "source": "supabase",
+                        "module_name": mod.get("name"),
+                        "category": mod.get("category"),
+                        "real_dimensions": None,
+                        "pins": pins_data,
+                        "image_url": mod.get("image_url") or image_url,
+                    }
+                )
+
+    # 2) No cached module found – call Gemini
+    try:
+        img_resp = requests.get(image_url, timeout=30)
+        if not img_resp.ok:
+            return jsonify({"error": f"Failed to download image: {img_resp.status_code}"}), 400
+        meta = _gemini_analyze_module_image(img_resp.content)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
+
+    return jsonify({"source": "gemini", **meta, "image_url": image_url})
 
 
 @app.route("/api/generate-pcb", methods=["POST"])

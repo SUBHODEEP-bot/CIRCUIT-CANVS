@@ -180,3 +180,13 @@ export function adminLogin(name: string, password: string) {
   });
 }
 
+export function adminAnalyzeModuleImage(imageUrl: string, name?: string) {
+  return request<any>("/api/admin/module-ai-map", {
+    method: "POST",
+    body: JSON.stringify({
+      image_url: imageUrl,
+      name: name || undefined,
+    }),
+  });
+}
+

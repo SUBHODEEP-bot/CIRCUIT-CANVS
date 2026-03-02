@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import Navbar from "@/components/layout/Navbar";
-import { Plus, Trash2, Upload, Cpu, X, Save } from "lucide-react";
+import { Plus, Trash2, Upload, Cpu, X, Save, Wand2 } from "lucide-react";
 import type { Module, ModulePin, PinType } from "@/lib/circuit-types";
 import { PIN_TYPES, PIN_TYPE_COLORS } from "@/lib/circuit-types";
 import {
@@ -20,6 +20,7 @@ import {
   adminCreatePins,
   adminDeletePin,
   uploadModuleImage,
+  adminAnalyzeModuleImage,
 } from "@/lib/api";
 
 /**
@@ -44,11 +45,13 @@ export default function AdminPage() {
   const [pins, setPins] = useState<ModulePin[]>([]);
   const [uploading, setUploading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
 
   // Pin placement state
   const [newPinName, setNewPinName] = useState("");
   const [newPinType, setNewPinType] = useState<PinType>("Digital");
   const [placingPin, setPlacingPin] = useState(false);
+  const [draggingPinId, setDraggingPinId] = useState<string | null>(null);
 
   useEffect(() => {
     checkAdminAccess();
@@ -143,6 +146,72 @@ export default function AdminPage() {
     }
   };
 
+  // AI-assisted pin detection using Gemini via backend
+  const handleAIMapping = async () => {
+    if (!moduleImageUrl) {
+      toast({ variant: "destructive", title: "Upload an image first" });
+      return;
+    }
+    setAiLoading(true);
+    try {
+      const meta = await adminAnalyzeModuleImage(moduleImageUrl, moduleName || undefined);
+      const source = meta.source as string | undefined;
+
+      if (meta.module_name && !moduleName) {
+        setModuleName(meta.module_name);
+      }
+      if (meta.category && !moduleCategory) {
+        setModuleCategory(meta.category);
+      }
+      if (meta.real_dimensions && !moduleDescription) {
+        const w = meta.real_dimensions.width_mm;
+        const h = meta.real_dimensions.height_mm;
+        if (w && h) {
+          setModuleDescription(`~${w.toFixed(1)}mm × ${h.toFixed(1)}mm module (${source === "supabase" ? "from library" : "AI estimated"})`);
+        }
+      }
+
+      if (Array.isArray(meta.pins)) {
+        const mappedPins: ModulePin[] = meta.pins.map((p: any, index: number) => {
+          const coords = p.x_y_coordinates || {};
+          const x = typeof coords.x_percent === "number" ? coords.x_percent : 50;
+          const y = typeof coords.y_percent === "number" ? coords.y_percent : 50;
+          const rawType = (p.type || "").toString().toLowerCase();
+          let pinType: PinType = "Digital";
+          if (rawType.includes("power") || rawType === "vcc" || rawType === "vdd") pinType = "Power";
+          else if (rawType.includes("ground") || rawType === "gnd") pinType = "Ground";
+          else if (rawType.includes("analog")) pinType = "Analog";
+          else if (rawType.includes("i2c") || rawType.includes("sda") || rawType.includes("scl")) pinType = "I2C";
+          else if (rawType.includes("spi")) pinType = "SPI";
+
+          return {
+            id: `temp-ai-${index}-${crypto.randomUUID()}`,
+            module_id: editingModule?.id || "temp",
+            name: p.name || `Pin ${index + 1}`,
+            pin_type: pinType,
+            x,
+            y,
+            created_at: new Date().toISOString(),
+          };
+        });
+        setPins(mappedPins);
+        toast({
+          title: source === "supabase" ? "Loaded from library" : "AI pins detected",
+          description: source === "supabase"
+            ? "Existing module definition loaded from Supabase."
+            : "Review and fine‑tune the detected pins before saving.",
+        });
+      } else {
+        toast({ variant: "destructive", title: "No pins returned from AI" });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "AI mapping failed";
+      toast({ variant: "destructive", title: "AI mapping failed", description: message });
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   // Handle click on image to place a pin
   const handleImageClick = (e: React.MouseEvent) => {
     if (!placingPin || !imageRef.current) return;
@@ -165,6 +234,19 @@ export default function AdminPage() {
     setNewPinName("");
     setPlacingPin(false);
   };
+
+  // Drag existing pins to fine‑tune their position
+  const handleImageMouseMove = (e: React.MouseEvent) => {
+    if (!draggingPinId || !imageRef.current) return;
+    const rect = imageRef.current.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    setPins(prev =>
+      prev.map(p => (p.id === draggingPinId ? { ...p, x: Math.min(Math.max(x, 0), 100), y: Math.min(Math.max(y, 0), 100) } : p)),
+    );
+  };
+
+  const stopDragging = () => setDraggingPinId(null);
 
   // Remove a pin
   const removePin = async (pinId: string) => {
@@ -306,13 +388,19 @@ export default function AdminPage() {
               {/* Image upload */}
               <div className="space-y-2">
                 <Label>Module Image</Label>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <label className="flex items-center gap-2 px-4 py-2 rounded-md border border-border bg-secondary text-secondary-foreground hover:bg-secondary/80 cursor-pointer text-sm transition-colors">
                     <Upload className="h-4 w-4" />
                     {uploading ? "Uploading..." : "Upload Image"}
                     <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} disabled={uploading} />
                   </label>
                   {moduleImageUrl && <span className="text-xs text-accent font-mono">✓ Image uploaded</span>}
+                  {moduleImageUrl && (
+                    <Button size="sm" variant="outline" disabled={aiLoading} onClick={handleAIMapping}>
+                      <Wand2 className="h-3 w-3 mr-1" />
+                      {aiLoading ? "Analyzing..." : "AI Detect Pins"}
+                    </Button>
+                  )}
                 </div>
               </div>
 
@@ -350,24 +438,31 @@ export default function AdminPage() {
 
                   <div
                     ref={imageRef}
-                    className={`relative border border-border rounded-lg overflow-hidden bg-muted/30 inline-block ${placingPin ? 'cursor-crosshair' : ''}`}
+                    className={`relative border border-border rounded-lg overflow-hidden bg-muted/30 inline-block ${placingPin ? "cursor-crosshair" : "cursor-default"}`}
                     onClick={handleImageClick}
+                    onMouseMove={handleImageMouseMove}
+                    onMouseUp={stopDragging}
+                    onMouseLeave={stopDragging}
                   >
                     <img src={moduleImageUrl} alt="Module" className="block max-w-full max-h-[500px]" draggable={false} />
                     {/* Render placed pins */}
                     {pins.map(pin => (
                       <div
                         key={pin.id}
-                        className="absolute w-4 h-4 rounded-full border-2"
+                        className="absolute w-4 h-4 rounded-full border-2 cursor-pointer"
                         style={{
                           left: `${pin.x}%`,
                           top: `${pin.y}%`,
                           marginLeft: -8,
                           marginTop: -8,
                           backgroundColor: PIN_TYPE_COLORS[pin.pin_type],
-                          borderColor: '#ffffff',
+                          borderColor: "#ffffff",
                         }}
                         title={`${pin.name} (${pin.pin_type})`}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          setDraggingPinId(pin.id);
+                        }}
                       />
                     ))}
                   </div>
