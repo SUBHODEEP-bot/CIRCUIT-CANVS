@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import Navbar from "@/components/layout/Navbar";
 import { Plus, Trash2, Upload, Cpu, X, Save, Wand2 } from "lucide-react";
-import type { Module, ModulePin, PinType } from "@/lib/circuit-types";
+import type { Module, ModulePin, PinType, ModulePcbMeta } from "@/lib/circuit-types";
 import { PIN_TYPES, PIN_TYPE_COLORS } from "@/lib/circuit-types";
 import {
   getSession,
@@ -41,6 +41,9 @@ export default function AdminPage() {
   const [moduleName, setModuleName] = useState("");
   const [moduleCategory, setModuleCategory] = useState("");
   const [moduleDescription, setModuleDescription] = useState("");
+  const [pcbWidth, setPcbWidth] = useState<number | "">("");
+  const [pcbHeight, setPcbHeight] = useState<number | "">("");
+  const [pcbPitch, setPcbPitch] = useState<number | "">("");
   const [moduleImageUrl, setModuleImageUrl] = useState("");
   const [pins, setPins] = useState<ModulePin[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -107,6 +110,9 @@ export default function AdminPage() {
     setModuleName("");
     setModuleCategory("");
     setModuleDescription("");
+    setPcbWidth("");
+    setPcbHeight("");
+    setPcbPitch("");
     setModuleImageUrl("");
     setPins([]);
     setIsCreating(true);
@@ -116,7 +122,24 @@ export default function AdminPage() {
     setEditingModule(mod);
     setModuleName(mod.name);
     setModuleCategory(mod.category || "");
-    setModuleDescription(mod.description || "");
+
+    let descText = mod.description || "";
+    let pcbMeta: ModulePcbMeta | undefined;
+    if (mod.description) {
+      try {
+        const parsed = JSON.parse(mod.description) as { text?: string | null; pcb?: ModulePcbMeta };
+        if (parsed && typeof parsed === "object") {
+          if (typeof parsed.text === "string") descText = parsed.text;
+          if (parsed.pcb) pcbMeta = parsed.pcb;
+        }
+      } catch {
+        // treat as plain string
+      }
+    }
+    setModuleDescription(descText);
+    setPcbWidth(pcbMeta?.width_mm ?? "");
+    setPcbHeight(pcbMeta?.height_mm ?? "");
+    setPcbPitch(pcbMeta?.pin_pitch_mm ?? "");
     setModuleImageUrl(mod.image_url || "");
     setIsCreating(true);
     await loadModulePins(mod.id);
@@ -127,6 +150,9 @@ export default function AdminPage() {
     setEditingModule(null);
     setPins([]);
     setPlacingPin(false);
+    setPcbWidth("");
+    setPcbHeight("");
+    setPcbPitch("");
   };
 
   // Upload module image to storage
@@ -163,11 +189,15 @@ export default function AdminPage() {
       if (meta.category && !moduleCategory) {
         setModuleCategory(meta.category);
       }
-      if (meta.real_dimensions && !moduleDescription) {
+      if (meta.real_dimensions) {
         const w = meta.real_dimensions.width_mm;
         const h = meta.real_dimensions.height_mm;
-        if (w && h) {
-          setModuleDescription(`~${w.toFixed(1)}mm × ${h.toFixed(1)}mm module (${source === "supabase" ? "from library" : "AI estimated"})`);
+        if (w) setPcbWidth(w);
+        if (h) setPcbHeight(h);
+        if (!moduleDescription && w && h) {
+          setModuleDescription(
+            `~${w.toFixed(1)}mm × ${h.toFixed(1)}mm module (${source === "supabase" ? "from library" : "AI estimated"})`,
+          );
         }
       }
 
@@ -194,7 +224,38 @@ export default function AdminPage() {
             created_at: new Date().toISOString(),
           };
         });
-        setPins(mappedPins);
+
+        // Auto-align pins into vertical columns to correct rough AI positions.
+        const alignPinsIntoColumns = (pinsToAlign: ModulePin[]): ModulePin[] => {
+          if (pinsToAlign.length <= 1) return pinsToAlign;
+
+          const left = pinsToAlign.filter(p => p.x <= 50);
+          const right = pinsToAlign.filter(p => p.x > 50);
+
+          const alignGroup = (group: ModulePin[]): ModulePin[] => {
+            if (group.length <= 1) return group;
+            const sorted = [...group].sort((a, b) => a.y - b.y);
+            const minY = sorted[0].y;
+            const maxY = sorted[sorted.length - 1].y;
+            const spread = maxY - minY || 1;
+            const avgX = sorted.reduce((sum, p) => sum + p.x, 0) / sorted.length;
+            return sorted.map((p, idx) => ({
+              ...p,
+              x: avgX,
+              y: minY + (spread * idx) / (sorted.length - 1 || 1),
+            }));
+          };
+
+          const alignedLeft = alignGroup(left);
+          const alignedRight = alignGroup(right);
+          const byId = new Map<string, ModulePin>();
+          [...alignedLeft, ...alignedRight].forEach(p => byId.set(p.id, p));
+
+          return pinsToAlign.map(p => byId.get(p.id) ?? p);
+        };
+
+        const aligned = alignPinsIntoColumns(mappedPins);
+        setPins(aligned);
         toast({
           title: source === "supabase" ? "Loaded from library" : "AI pins detected",
           description: source === "supabase"
@@ -205,8 +266,14 @@ export default function AdminPage() {
         toast({ variant: "destructive", title: "No pins returned from AI" });
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "AI mapping failed";
-      toast({ variant: "destructive", title: "AI mapping failed", description: message });
+      const raw = err instanceof Error ? err.message : "AI mapping failed";
+      const message = raw.length > 220 ? `${raw.slice(0, 220)}…` : raw;
+      toast({
+        variant: "destructive",
+        title: "AI mapping failed",
+        description: message,
+      });
+      console.error("AI mapping error:", err);
     } finally {
       setAiLoading(false);
     }
@@ -269,12 +336,21 @@ export default function AdminPage() {
     }
 
     try {
+      const pcbMeta: ModulePcbMeta = {
+        width_mm: pcbWidth === "" ? undefined : pcbWidth,
+        height_mm: pcbHeight === "" ? undefined : pcbHeight,
+        pin_pitch_mm: pcbPitch === "" ? undefined : pcbPitch,
+      };
+      const descriptionPayload = JSON.stringify({
+        text: moduleDescription || null,
+        pcb: pcbMeta,
+      });
       if (editingModule) {
         // Update existing module
         await adminUpdateModule(editingModule.id, {
           name: moduleName,
           category: moduleCategory || null,
-          description: moduleDescription || null,
+          description: descriptionPayload,
           image_url: moduleImageUrl || null,
         });
 
@@ -296,7 +372,7 @@ export default function AdminPage() {
         const data = await adminCreateModule({
           name: moduleName,
           category: moduleCategory || null,
-          description: moduleDescription || null,
+          description: descriptionPayload,
           image_url: moduleImageUrl || null,
         });
 
@@ -382,6 +458,43 @@ export default function AdminPage() {
                 <div className="space-y-2">
                   <Label>Description</Label>
                   <Input value={moduleDescription} onChange={(e) => setModuleDescription(e.target.value)} placeholder="Short description" />
+                </div>
+              </div>
+
+              {/* Physical PCB data */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label>PCB Width (mm)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={pcbWidth === "" ? "" : pcbWidth}
+                    onChange={(e) => setPcbWidth(e.target.value === "" ? "" : Number(e.target.value))}
+                    placeholder="e.g. 25.4"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>PCB Height (mm)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={pcbHeight === "" ? "" : pcbHeight}
+                    onChange={(e) => setPcbHeight(e.target.value === "" ? "" : Number(e.target.value))}
+                    placeholder="e.g. 40"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Pin Pitch (mm)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={pcbPitch === "" ? "" : pcbPitch}
+                    onChange={(e) => setPcbPitch(e.target.value === "" ? "" : Number(e.target.value))}
+                    placeholder="e.g. 2.54"
+                  />
                 </div>
               </div>
 

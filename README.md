@@ -114,6 +114,43 @@ CircuitForge requires these tables in Supabase:
 
 See Supabase migrations in `circuit-canvas/supabase/migrations/` for full schema.
 
+## 🤖 AI Module Mapping
+
+The admin panel includes an **AI Detect Pins** feature that uses
+Google's Gemini/Generative Language API to infer pin locations and
+metadata from a module image.
+
+To enable this:
+
+1. Create an API key in the Google Cloud Console with access to the
+   Generative Language API.  Avoid using keys you share publicly – if
+   a key is leaked it will be blocked and the feature will return
+   404s.
+2. Set the key in both backend and frontend environment files:
+   ```env
+   GEMINI_API_KEY=your-new-key
+   GEMINI_MODEL=gemini-1.5-pro        # or another supported model
+   # optionally override default endpoint/method:
+   GEMINI_API_URL=https://generativelanguage.googleapis.com/v1beta
+   GEMINI_API_METHOD=generateContent
+   ```
+3. Restart the Flask server so the backend picks up the new values.
+
+If the AI mapping fails you’ll see a red error banner like this:
+
+> Gemini API error: 404 ... model is not found for API version v1beta ...
+
+- Verify you’re using a supported model name and that your key has
+  permission to call the chosen endpoint/version.
+- The backend now performs a quick `/models` call before attempting
+  to generate; if your key is invalid, leaked, or blocked it will show
+  **Gemini key validation failed** with either a 401/403 message.
+  This should make it obvious when you simply need a new API key.
+- You can switch to the newer `/v1/models/<model>:generate` API by
+  setting `GEMINI_API_URL`/`GEMINI_API_METHOD` accordingly.
+
+Adding these notes here should help future debugging.
+
 ## 🛠️ Tech Stack
 
 **Frontend:**

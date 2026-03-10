@@ -486,12 +486,24 @@ export default function CanvasPage() {
 
     const schematicModules = placedModules.map((inst) => {
       const mod = modules.find((m) => m.id === inst.moduleId);
+      let pcbMeta: any = null;
+      if (mod?.description) {
+        try {
+          const parsed = JSON.parse(mod.description) as { pcb?: any; text?: string };
+          if (parsed && typeof parsed === "object" && parsed.pcb) {
+            pcbMeta = parsed.pcb;
+          }
+        } catch {
+          // ignore
+        }
+      }
       const pins = allPins[inst.moduleId] || [];
       return {
         instanceId: inst.instanceId,
         moduleId: inst.moduleId,
         moduleName: mod?.name || "Unknown",
         category: mod?.category || null,
+        pcb_meta: pcbMeta,
         x: inst.x,
         y: inst.y,
         pins: pins.map((p) => ({

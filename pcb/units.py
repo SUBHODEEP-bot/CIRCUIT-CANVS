@@ -40,6 +40,11 @@ def inch_to_mm(inch: float) -> float:
     return inch * MM_PER_INCH
 
 
+def mm_to_units(mm: float) -> float:
+    """Convert millimeters to internal units (pixels)."""
+    return mm_to_px(mm)
+
+
 # ── Standard design rules (IPC Class 2 — general electronics) ─────
 TRACE_WIDTH_MM       = 0.254     # 10 mil — standard signal trace
 TRACE_WIDTH_POWER_MM = 0.508     # 20 mil — power / GND trace

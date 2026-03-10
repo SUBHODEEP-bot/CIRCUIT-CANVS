@@ -16,6 +16,15 @@ export interface Module {
   updated_at: string;
 }
 
+// Optional parsed PCB metadata that can be embedded in the module
+// description as JSON. We don't store it in Supabase as a separate
+// column yet, but the frontend/backend agree on this shape.
+export interface ModulePcbMeta {
+  width_mm?: number | null;
+  height_mm?: number | null;
+  pin_pitch_mm?: number | null;
+}
+
 export interface ModulePin {
   id: string;
   module_id: string;

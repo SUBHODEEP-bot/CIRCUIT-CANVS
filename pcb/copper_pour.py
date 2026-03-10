@@ -54,6 +54,44 @@ class CopperPour:
     pad_exclusions: list[Exclusion] = field(default_factory=list)
     trace_exclusions: list[TraceExclusion] = field(default_factory=list)
     thermals: list[ThermalRelief] = field(default_factory=list)
+    
+    def to_dict(self):
+        """Serialize to JSON-compatible dictionary."""
+        return {
+            "net": self.net,
+            "boardWidth": self.board_width,
+            "boardHeight": self.board_height,
+            "clearance": self.clearance,
+            "padExclusions": [
+                {
+                    "kind": e.kind,
+                    "cx": round(e.cx, 3),
+                    "cy": round(e.cy, 3),
+                    "radius": round(e.radius, 3),
+                    "width": round(e.width, 3),
+                    "height": round(e.height, 3)
+                }
+                for e in self.pad_exclusions
+            ],
+            "traceExclusions": [
+                {
+                    "points": [{"x": round(p[0], 3), "y": round(p[1], 3)} for p in te.points],
+                    "clearance": te.clearance
+                }
+                for te in self.trace_exclusions
+            ],
+            "thermals": [
+                {
+                    "cx": t.cx,
+                    "cy": t.cy,
+                    "outerRadius": t.outer_radius,
+                    "innerRadius": t.inner_radius,
+                    "spokeWidth": t.spoke_width,
+                    "spokeCount": t.spoke_count
+                }
+                for t in self.thermals
+            ]
+        }
 
 
 def generate_pour(
@@ -61,6 +99,7 @@ def generate_pour(
     placed: list[PlacedComponent],
     traces: list[Trace],
     gnd_net_name: str = "GND",
+    clearance: float = POUR_CLEARANCE_MM,
 ) -> CopperPour:
     """
     Build the copper pour data for the given GND net.
@@ -75,6 +114,7 @@ def generate_pour(
         net=gnd_net_name,
         board_width=board.width,
         board_height=board.height,
+        clearance=clearance,
     )
 
     for comp in placed:

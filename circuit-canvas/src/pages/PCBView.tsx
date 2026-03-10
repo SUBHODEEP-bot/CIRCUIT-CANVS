@@ -204,8 +204,8 @@ export default function PCBView() {
       // Silkscreen outline
       if (showSilk) {
         ctx.strokeStyle = SILK_COL;
-        ctx.lineWidth   = Math.max(pcb.units.silkscreenWidth * sf, 0.8 / scale);
-        for (const sl of comp.silkscreen) {
+        ctx.lineWidth   = Math.max((pcb.units.silkscreenWidth ?? 0.15) * sf, 0.8 / scale);
+        for (const sl of comp.silkscreen ?? []) {
           ctx.beginPath();
           ctx.moveTo(sl.x1 * sf, sl.y1 * sf);
           ctx.lineTo(sl.x2 * sf, sl.y2 * sf);

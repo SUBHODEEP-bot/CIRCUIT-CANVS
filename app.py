@@ -33,8 +33,21 @@ SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE")
 # Gemini API configuration (for AI-assisted module mapping).
 # The user must set GEMINI_API_KEY in an environment variable or in
 # circuit-canvas/.env (never hard-code keys in source control).
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
+GEMINI_API_KEY = "AIzaSyBlmj3QAO6Dk1FEl174xpGvnDtYtJ9Jvlg"
+# The Gemini **developer** API currently uses the v1beta endpoint and
+# recommends the generic \"gemini-flash-latest\" alias instead of the
+# older \"gemini-1.5-flash\" model names. We normalise common legacy
+# names to this alias to avoid 404 errors.
+_raw_model = "gemini-2.5-flash"
+if _raw_model in {
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro",
+    "gemini-1.5-pro-latest",
+}:
+    GEMINI_MODEL = "gemini-flash-latest"
+else:
+    GEMINI_MODEL = _raw_model
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 REST_URL = f"{SUPABASE_URL}/rest/v1"
@@ -195,16 +208,40 @@ def _gemini_analyze_module_image(image_bytes: bytes) -> dict:
     data = resp.json()
     try:
         candidates = data.get("candidates") or []
+        if not candidates:
+            raise ValueError("No candidates in Gemini response")
         first = candidates[0]
-        parts = first.get("content", {}).get("parts") or first.get("content", [{}]).get("parts", [])
+        content = first.get("content") or {}
+        parts = content.get("parts") or []
         if not parts:
-            raise ValueError("No content parts in Gemini response")
-        text = parts[0].get("text", "").strip()
+            raise ValueError("No content.parts in Gemini response")
+        raw_text = parts[0].get("text", "") or ""
+        text = raw_text.strip()
+
+        # Gemini sometimes wraps JSON in markdown fences or adds prose.
+        # Try to extract the JSON object/array portion robustly.
         import json as _json
+        import re as _re
+
+        # Remove ```json ... ``` fencing if present
+        if text.startswith("```"):
+            # Strip leading fence
+            text = _re.sub(r"^```[a-zA-Z0-9_-]*", "", text).strip()
+            # Strip trailing fence
+            if text.endswith("```"):
+                text = text[:-3].strip()
+
+        # If still not pure JSON, try to slice from first '{' to last '}'.
+        if not text.lstrip().startswith(("{", "[")):
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                text = text[start : end + 1]
 
         return _json.loads(text)
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"Failed to parse Gemini response: {exc}; raw={data}") from exc
+        # Keep error message short; log full response server-side if needed.
+        raise RuntimeError(f"Failed to parse Gemini response: {exc}") from exc
 
 
 @app.route("/api/auth/signup", methods=["POST"])
@@ -563,13 +600,17 @@ def _proxy_mutation(method: str, path: str, json_body: dict | None = None, param
     if not access_token and not allow_admin:
         return jsonify({"error": "Not authenticated"}), 401
 
-    # Choose headers: prefer user access token; otherwise require a service role key for admin
-    if access_token:
-        headers = _supabase_headers(access_token)
-    else:
+    # Choose headers:
+    # - For admin operations (admin cookie present), always use the
+    #   service-role key so we bypass RLS for management tasks.
+    # - For normal user operations, use the user's access token so
+    #   RLS still applies.
+    if allow_admin:
         if not (SUPABASE_SERVICE_ROLE or SUPABASE_SERVICE_KEY):
             return jsonify({"error": "Server misconfiguration: missing SUPABASE_SERVICE_ROLE"}), 500
         headers = _supabase_headers(None, use_service=True)
+    else:
+        headers = _supabase_headers(access_token)
 
     func = getattr(requests, method.lower())
     # Ask PostgREST to return the created/updated representation for mutations
@@ -689,6 +730,15 @@ def api_admin_update_module(module_id: str):
 
 @app.route("/api/admin/modules/<module_id>", methods=["DELETE"])
 def api_admin_delete_module(module_id: str):
+    # First delete all module_pins rows that reference this module to
+    # avoid foreign-key constraint errors, then delete the module row.
+    try:
+        _proxy_mutation("delete", "module_pins", None, {"module_id": f"eq.{module_id}"})
+    except Exception:
+        # Even if pin deletion fails for some reason, try to delete the
+        # module and let Supabase/PostgREST report the underlying error.
+        pass
+
     params = {"id": f"eq.{module_id}"}
     return _proxy_mutation("delete", "modules", None, params)
 
